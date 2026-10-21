@@ -7,6 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Locardy">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <title>Locardy</title>
 
   <style>
@@ -17,6 +18,7 @@
       --accent: #0a84ff;
       --danger: #ff453a;
       --muted: #8e8e93;
+      --radius: 22px;
     }
 
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -56,35 +58,78 @@
     .grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
+      gap: 14px;
       width: 100%;
       max-width: 450px;
       margin-bottom: 24px;
     }
 
+    /* ---------- Photo buttons: fixed size, soft gradient, colour coded ---------- */
     .photo-btn {
-      background: var(--card);
-      border: 1px solid var(--border);
+      --c: #8e8e93;                       /* colour code, set per button */
+      position: relative;
+      height: 76px;                       /* fixed size */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 14px;
       color: #fff;
-      border-radius: 14px;
-      min-height: 64px;
-      padding: 14px 10px;
       font-size: 1.05rem;
-      font-weight: 500;
+      font-weight: 600;
       text-align: center;
       cursor: pointer;
-      transition: transform 0.1s ease, background-color 0.2s;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      border-radius: var(--radius);
+      border: 1px solid #3a3a3d;          /* fallback if color-mix is unsupported */
+      background-color: #2a2a2d;          /* fallback */
+      background-image: linear-gradient(145deg,
+        color-mix(in srgb, var(--c) 42%, #1c1c1e),
+        color-mix(in srgb, var(--c) 14%, #1c1c1e));
+      border-color: color-mix(in srgb, var(--c) 45%, #2c2c2e);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    .photo-btn:active { transform: scale(0.96); }
+
+    .photo-btn .label {
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
+      overflow: hidden;
       word-break: break-word;
+      line-height: 1.25;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     }
 
-    .photo-btn:active { transform: scale(0.96); background: var(--border); }
+    /* Drag handle: only visible in Edit mode */
+    .handle {
+      display: none;
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 44px;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      line-height: 1;
+      color: rgba(255, 255, 255, 0.75);
+      touch-action: none;                 /* lets us drag without the page scrolling */
+      cursor: grab;
+    }
 
-    .editing .photo-btn { border-color: var(--accent); border-style: dashed; }
+    .editing .handle { display: flex; }
+    .editing .photo-btn { border-style: dashed; padding-left: 40px; }
+
+    .photo-btn.dragging {
+      transform: scale(1.05);
+      z-index: 5;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+      opacity: 0.92;
+    }
 
     .empty-msg {
       grid-column: 1 / -1;
@@ -97,20 +142,21 @@
       display: block;
       width: 100%;
       max-width: 450px;
-      background: var(--accent);
+      background: linear-gradient(145deg, #3a9bff, #0a6fe0);
       color: #fff;
-      padding: 14px;
-      border-radius: 14px;
+      padding: 16px;
+      border-radius: var(--radius);
       font-weight: 600;
       text-align: center;
       cursor: pointer;
+      box-shadow: 0 4px 14px rgba(10, 132, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
 
     #fileInput { display: none; }
 
     .hint { color: var(--muted); font-size: 0.8rem; margin-top: 12px; text-align: center; max-width: 450px; }
 
-    /* Full-screen viewer */
+    /* ---------- Full-screen viewer ---------- */
     .viewer {
       position: fixed;
       inset: 0;
@@ -135,8 +181,8 @@
       background: rgba(60, 60, 62, 0.75);
       color: #fff;
       border: none;
-      padding: 10px 18px;
-      border-radius: 20px;
+      padding: 10px 20px;
+      border-radius: 22px;
       font-size: 0.95rem;
       font-weight: 600;
       backdrop-filter: blur(10px);
@@ -156,7 +202,7 @@
       white-space: nowrap;
     }
 
-    /* Edit sheet */
+    /* ---------- Edit sheet ---------- */
     .sheet-backdrop {
       position: fixed;
       inset: 0;
@@ -173,8 +219,8 @@
       background: var(--card);
       width: 100%;
       max-width: 450px;
-      border-radius: 18px 18px 0 0;
-      padding: 20px 16px calc(env(safe-area-inset-bottom) + 20px);
+      border-radius: 28px 28px 0 0;
+      padding: 22px 18px calc(env(safe-area-inset-bottom) + 20px);
     }
 
     .sheet h3 { margin: 0 0 12px; font-size: 1.05rem; }
@@ -184,17 +230,44 @@
       background: var(--bg);
       border: 1px solid var(--border);
       color: #fff;
-      border-radius: 10px;
-      padding: 12px;
+      border-radius: 14px;
+      padding: 13px;
       font-size: 16px; /* 16px stops iOS zooming on focus */
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
 
-    .sheet button {
+    .sheet .field-label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-bottom: 8px;
+    }
+
+    .swatches {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .sheet .swatch {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      margin: 0;
+      border-radius: 50%;
+      border: 3px solid transparent;
+      background: var(--sw);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+    }
+
+    .sheet .swatch.selected { border-color: #fff; }
+
+    .sheet .action {
       width: 100%;
       border: none;
-      border-radius: 10px;
-      padding: 13px;
+      border-radius: 14px;
+      padding: 14px;
       font-size: 1rem;
       font-weight: 600;
       margin-top: 8px;
@@ -233,14 +306,30 @@
     <div class="sheet" id="sheet">
       <h3 id="sheetTitle">Edit photo</h3>
       <input type="text" id="nameInput" maxlength="40" autocomplete="off">
-      <button class="primary" id="saveName">Save name</button>
-      <button class="danger" id="deletePhoto">Delete photo</button>
-      <button id="cancelSheet">Cancel</button>
+      <span class="field-label">Colour</span>
+      <div class="swatches" id="swatches"></div>
+      <button class="action primary" id="saveBtn">Save</button>
+      <button class="action danger" id="deletePhoto">Delete photo</button>
+      <button class="action" id="cancelSheet">Cancel</button>
     </div>
   </div>
 
   <script>
     const MAX_PHOTOS = 16;
+
+    // Colour palette. The first entry (grey) is the default / "no colour".
+    const COLOURS = [
+      { name: 'Grey',   value: '#8e8e93' },
+      { name: 'Blue',   value: '#0a84ff' },
+      { name: 'Teal',   value: '#30b0c7' },
+      { name: 'Green',  value: '#30d158' },
+      { name: 'Yellow', value: '#ffd60a' },
+      { name: 'Orange', value: '#ff9f0a' },
+      { name: 'Red',    value: '#ff453a' },
+      { name: 'Pink',   value: '#ff375f' },
+      { name: 'Purple', value: '#bf5af2' }
+    ];
+    const DEFAULT_COLOUR = COLOURS[0].value;
 
     const grid          = document.getElementById('grid');
     const fileInput     = document.getElementById('fileInput');
@@ -251,10 +340,12 @@
     const viewerTitle   = document.getElementById('viewerTitle');
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const nameInput     = document.getElementById('nameInput');
+    const swatchBox     = document.getElementById('swatches');
 
     let db;
     let editing = false;
     let editingId = null;
+    let selectedColour = DEFAULT_COLOUR;
     let currentUrl = null;
 
     /* ---------- Database ---------- */
@@ -278,10 +369,13 @@
       hint.textContent = 'Could not open local storage. Photos cannot be saved here.';
     };
 
+    // Photos saved by earlier versions have no "order" or "colour"; fall back to id / grey.
+    const orderOf = (p) => (typeof p.order === 'number' ? p.order : p.id);
+
     function getAll() {
       return new Promise((resolve, reject) => {
         const req = db.transaction('photos', 'readonly').objectStore('photos').getAll();
-        req.onsuccess = () => resolve(req.result);
+        req.onsuccess = () => resolve(req.result.sort((a, b) => orderOf(a) - orderOf(b)));
         req.onerror = () => reject(req.error);
       });
     }
@@ -312,6 +406,26 @@
       });
     }
 
+    // Save the display order: ids is the list of photo ids in the new order.
+    function saveOrder(ids) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('photos', 'readwrite');
+        const store = tx.objectStore('photos');
+        ids.forEach((id, index) => {
+          const req = store.get(id);
+          req.onsuccess = () => {
+            const record = req.result;
+            if (record) {
+              record.order = index;
+              store.put(record);
+            }
+          };
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
     /* ---------- Grid ---------- */
 
     async function render() {
@@ -327,17 +441,88 @@
       }
 
       photos.forEach((photo) => {
-        const btn = document.createElement('button');
+        const btn = document.createElement('div');
         btn.className = 'photo-btn';
-        btn.textContent = photo.name;
+        btn.setAttribute('role', 'button');
+        btn.dataset.id = photo.id;
+        btn.style.setProperty('--c', photo.colour || DEFAULT_COLOUR);
+
+        const handle = document.createElement('span');
+        handle.className = 'handle';
+        handle.textContent = '☰';           // ☰ drag handle
+        handle.setAttribute('aria-label', 'Drag to reorder');
+
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = photo.name;
+
+        btn.append(handle, label);
         btn.onclick = () => (editing ? openSheet(photo) : openViewer(photo));
         grid.appendChild(btn);
       });
 
       hint.textContent = editing
-        ? 'Tap a button to rename or delete it.'
+        ? 'Drag ☰ to reorder. Tap a button to rename, recolour or delete.'
         : `${photos.length} of ${MAX_PHOTOS} photos`;
     }
+
+    /* ---------- Drag to reorder (Edit mode) ---------- */
+
+    let drag = null;
+
+    grid.addEventListener('pointerdown', (e) => {
+      if (!editing) return;
+      const handle = e.target.closest('.handle');
+      if (!handle) return;
+
+      e.preventDefault();
+      const card = handle.closest('.photo-btn');
+      handle.setPointerCapture(e.pointerId);
+      drag = { card, pointerId: e.pointerId, handle };
+      card.classList.add('dragging');
+    });
+
+    grid.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      e.preventDefault();
+
+      // Nudge the page if the finger is near the top or bottom edge
+      if (e.clientY < 90) window.scrollBy(0, -14);
+      else if (e.clientY > window.innerHeight - 90) window.scrollBy(0, 14);
+
+      // If the finger is over another button, swap places with it
+      const cards = Array.from(grid.querySelectorAll('.photo-btn'));
+      for (const other of cards) {
+        if (other === drag.card) continue;
+        const r = other.getBoundingClientRect();
+        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+          const dragIndex = cards.indexOf(drag.card);
+          const otherIndex = cards.indexOf(other);
+          if (otherIndex > dragIndex) other.after(drag.card);
+          else other.before(drag.card);
+          break;
+        }
+      }
+    });
+
+    async function endDrag(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      const finished = drag;
+      drag = null;
+      finished.card.classList.remove('dragging');
+      try { finished.handle.releasePointerCapture(e.pointerId); } catch (err) {}
+
+      const ids = Array.from(grid.querySelectorAll('.photo-btn')).map((c) => Number(c.dataset.id));
+      await saveOrder(ids);
+    }
+
+    grid.addEventListener('pointerup', endDrag);
+    grid.addEventListener('pointercancel', endDrag);
+
+    // A drag that ends on the handle should not also count as a tap on the button
+    grid.addEventListener('click', (e) => {
+      if (e.target.closest('.handle')) e.stopPropagation();
+    }, true);
 
     /* ---------- Viewer ---------- */
 
@@ -367,9 +552,27 @@
       render();
     };
 
+    function buildSwatches() {
+      swatchBox.innerHTML = '';
+      COLOURS.forEach((c) => {
+        const s = document.createElement('button');
+        s.type = 'button';
+        s.className = 'swatch' + (c.value === selectedColour ? ' selected' : '');
+        s.style.setProperty('--sw', c.value);
+        s.setAttribute('aria-label', c.name);
+        s.onclick = () => {
+          selectedColour = c.value;
+          buildSwatches();
+        };
+        swatchBox.appendChild(s);
+      });
+    }
+
     function openSheet(photo) {
       editingId = photo.id;
       nameInput.value = photo.name;
+      selectedColour = photo.colour || DEFAULT_COLOUR;
+      buildSwatches();
       sheetBackdrop.classList.add('open');
     }
 
@@ -384,11 +587,12 @@
       if (e.target === sheetBackdrop) closeSheet();
     };
 
-    document.getElementById('saveName').onclick = async () => {
+    document.getElementById('saveBtn').onclick = async () => {
       const name = nameInput.value.trim();
       if (!name || editingId === null) return;
       const record = await getOne(editingId);
       record.name = name;
+      record.colour = selectedColour;
       await put(record);
       closeSheet();
       render();
@@ -410,7 +614,7 @@
       if (!files.length) return;
 
       const existing = await getAll();
-      let room = MAX_PHOTOS - existing.length;
+      const room = MAX_PHOTOS - existing.length;
 
       if (room <= 0) {
         alert(`Limit of ${MAX_PHOTOS} photos reached. Delete one first.`);
@@ -421,11 +625,14 @@
         alert(`Only ${room} more photo(s) fit, so the first ${room} will be added.`);
       }
 
+      // New photos go at the end of the current order
+      let nextOrder = existing.length ? Math.max(...existing.map(orderOf)) + 1 : 0;
+
       for (const file of files.slice(0, room)) {
-        // Default name = file name without extension; you can rename in Edit mode
+        // Default name = file name without extension; rename / recolour in Edit mode
         const defaultName = file.name.replace(/\.[^.]+$/, '') || 'Photo';
         const name = (prompt('Name for this photo:', defaultName) || defaultName).trim();
-        await put({ name: name || defaultName, blob: file });
+        await put({ name: name || defaultName, blob: file, colour: DEFAULT_COLOUR, order: nextOrder++ });
       }
 
       render();
