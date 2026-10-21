@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Photos">
+  <meta name="apple-mobile-web-app-title" content="Locardy">
   <title>Locardy</title>
 
   <style>
@@ -109,19 +109,6 @@
     #fileInput { display: none; }
 
     .hint { color: var(--muted); font-size: 0.8rem; margin-top: 12px; text-align: center; max-width: 450px; }
-
-    .resize-opt {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      margin-top: 14px;
-      color: var(--muted);
-      font-size: 0.9rem;
-      cursor: pointer;
-    }
-
-    .resize-opt input { width: 18px; height: 18px; accent-color: var(--accent); }
 
     /* Full-screen viewer */
     .viewer {
@@ -231,11 +218,8 @@
 
   <label for="fileInput" class="add-label">Add Photos</label>
   <input type="file" id="fileInput" accept="image/*" multiple>
-  <label class="resize-opt">
-    <input type="checkbox" id="resizeToggle">
-    Resize large photos when adding (saves space)
-  </label>
   <p class="hint" id="hint"></p>
+  <p class="hint" style="margin-top: 4px;">acamapps v1.0</p>
 
   <!-- Viewer -->
   <div class="viewer" id="viewer">
@@ -418,47 +402,6 @@
       render();
     };
 
-    /* ---------- Resize option ---------- */
-
-    const MAX_EDGE = 3000;   // longest side in pixels after resizing
-    const JPEG_QUALITY = 0.9;
-
-    const resizeToggle = document.getElementById('resizeToggle');
-
-    try { resizeToggle.checked = localStorage.getItem('resizePhotos') === '1'; } catch (err) {}
-
-    resizeToggle.addEventListener('change', () => {
-      try { localStorage.setItem('resizePhotos', resizeToggle.checked ? '1' : '0'); } catch (err) {}
-    });
-
-    // Returns a smaller JPEG if the photo is bigger than MAX_EDGE; otherwise (or on any
-    // failure) returns the original file untouched.
-    async function maybeResize(file) {
-      if (!resizeToggle.checked) return file;
-
-      try {
-        const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-        const longest = Math.max(bitmap.width, bitmap.height);
-
-        if (longest <= MAX_EDGE) {
-          bitmap.close();
-          return file;
-        }
-
-        const scale = MAX_EDGE / longest;
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(bitmap.width * scale);
-        canvas.height = Math.round(bitmap.height * scale);
-        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        bitmap.close();
-
-        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
-        return blob && blob.size < file.size ? blob : file;
-      } catch (err) {
-        return file;
-      }
-    }
-
     /* ---------- Adding photos ---------- */
 
     fileInput.addEventListener('change', async (e) => {
@@ -482,8 +425,7 @@
         // Default name = file name without extension; you can rename in Edit mode
         const defaultName = file.name.replace(/\.[^.]+$/, '') || 'Photo';
         const name = (prompt('Name for this photo:', defaultName) || defaultName).trim();
-        const blob = await maybeResize(file);
-        await put({ name: name || defaultName, blob });
+        await put({ name: name || defaultName, blob: file });
       }
 
       render();
