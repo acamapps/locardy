@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Photos">
+  <title>Photos</title>
+
+  <style>
+    :root {
+      --bg: #0b0b0c;
+      --card: #1c1c1e;
+      --border: #2c2c2e;
+      --accent: #0a84ff;
+      --danger: #ff453a;
+      --muted: #8e8e93;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background: var(--bg);
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 24px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: 100%;
+      max-width: 450px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0; letter-spacing: -0.5px; }
+
+    .link-btn {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 1rem;
+      font-weight: 500;
+      padding: 8px 0 8px 12px;
+      cursor: pointer;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      width: 100%;
+      max-width: 450px;
+      margin-bottom: 24px;
+    }
+
+    .photo-btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: #fff;
+      border-radius: 14px;
+      min-height: 64px;
+      padding: 14px 10px;
+      font-size: 1.05rem;
+      font-weight: 500;
+      text-align: center;
+      cursor: pointer;
+      transition: transform 0.1s ease, background-color 0.2s;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      word-break: break-word;
+    }
+
+    .photo-btn:active { transform: scale(0.96); background: var(--border); }
+
+    .editing .photo-btn { border-color: var(--accent); border-style: dashed; }
+
+    .empty-msg {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: var(--muted);
+      padding: 40px 0;
+    }
+
+    .add-label {
+      display: block;
+      width: 100%;
+      max-width: 450px;
+      background: var(--accent);
+      color: #fff;
+      padding: 14px;
+      border-radius: 14px;
+      font-weight: 600;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    #fileInput { display: none; }
+
+    .hint { color: var(--muted); font-size: 0.8rem; margin-top: 12px; text-align: center; max-width: 450px; }
+
+    /* Full-screen viewer */
+    .viewer {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      display: none;
+      z-index: 100;
+    }
+
+    .viewer.open { display: block; }
+
+    .viewer img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      touch-action: pinch-zoom;
+    }
+
+    .close-btn {
+      position: absolute;
+      top: calc(env(safe-area-inset-top) + 12px);
+      right: 16px;
+      background: rgba(60, 60, 62, 0.75);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    .viewer-title {
+      position: absolute;
+      top: calc(env(safe-area-inset-top) + 18px);
+      left: 16px;
+      color: #fff;
+      font-weight: 600;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+      max-width: 55%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Edit sheet */
+    .sheet-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      z-index: 200;
+    }
+
+    .sheet-backdrop.open { display: flex; }
+
+    .sheet {
+      background: var(--card);
+      width: 100%;
+      max-width: 450px;
+      border-radius: 18px 18px 0 0;
+      padding: 20px 16px calc(env(safe-area-inset-bottom) + 20px);
+    }
+
+    .sheet h3 { margin: 0 0 12px; font-size: 1.05rem; }
+
+    .sheet input[type="text"] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: #fff;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 16px; /* 16px stops iOS zooming on focus */
+      margin-bottom: 12px;
+    }
+
+    .sheet button {
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 13px;
+      font-size: 1rem;
+      font-weight: 600;
+      margin-top: 8px;
+      cursor: pointer;
+      background: var(--border);
+      color: #fff;
+    }
+
+    .sheet .primary { background: var(--accent); }
+    .sheet .danger  { color: var(--danger); }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Photos</h1>
+    <button class="link-btn" id="editToggle">Edit</button>
+  </header>
+
+  <div class="grid" id="grid"></div>
+
+  <label for="fileInput" class="add-label">Add Photos</label>
+  <input type="file" id="fileInput" accept="image/*" multiple>
+  <p class="hint" id="hint"></p>
+
+  <!-- Viewer -->
+  <div class="viewer" id="viewer">
+    <div class="viewer-title" id="viewerTitle"></div>
+    <button class="close-btn" id="closeViewer">Close</button>
+    <img id="viewerImg" alt="">
+  </div>
+
+  <!-- Edit sheet -->
+  <div class="sheet-backdrop" id="sheetBackdrop">
+    <div class="sheet" id="sheet">
+      <h3 id="sheetTitle">Edit photo</h3>
+      <input type="text" id="nameInput" maxlength="40" autocomplete="off">
+      <button class="primary" id="saveName">Save name</button>
+      <button class="danger" id="deletePhoto">Delete photo</button>
+      <button id="cancelSheet">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    const MAX_PHOTOS = 16;
+
+    const grid          = document.getElementById('grid');
+    const fileInput     = document.getElementById('fileInput');
+    const editToggle    = document.getElementById('editToggle');
+    const hint          = document.getElementById('hint');
+    const viewer        = document.getElementById('viewer');
+    const viewerImg     = document.getElementById('viewerImg');
+    const viewerTitle   = document.getElementById('viewerTitle');
+    const sheetBackdrop = document.getElementById('sheetBackdrop');
+    const nameInput     = document.getElementById('nameInput');
+
+    let db;
+    let editing = false;
+    let editingId = null;
+    let currentUrl = null;
+
+    /* ---------- Database ---------- */
+
+    const request = indexedDB.open('QuickPhotos', 1);
+
+    request.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+    };
+
+    request.onsuccess = (e) => {
+      db = e.target.result;
+      render();
+      // Ask the browser not to clear this data when storage is low
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist();
+      }
+    };
+
+    request.onerror = () => {
+      hint.textContent = 'Could not open local storage. Photos cannot be saved here.';
+    };
+
+    function getAll() {
+      return new Promise((resolve, reject) => {
+        const req = db.transaction('photos', 'readonly').objectStore('photos').getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    function getOne(id) {
+      return new Promise((resolve, reject) => {
+        const req = db.transaction('photos', 'readonly').objectStore('photos').get(id);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    function put(record) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('photos', 'readwrite');
+        tx.objectStore('photos').put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    function remove(id) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('photos', 'readwrite');
+        tx.objectStore('photos').delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    /* ---------- Grid ---------- */
+
+    async function render() {
+      const photos = await getAll();
+      grid.innerHTML = '';
+      grid.classList.toggle('editing', editing);
+
+      if (photos.length === 0) {
+        const msg = document.createElement('div');
+        msg.className = 'empty-msg';
+        msg.textContent = 'No photos yet. Tap "Add Photos".';
+        grid.appendChild(msg);
+      }
+
+      photos.forEach((photo) => {
+        const btn = document.createElement('button');
+        btn.className = 'photo-btn';
+        btn.textContent = photo.name;
+        btn.onclick = () => (editing ? openSheet(photo) : openViewer(photo));
+        grid.appendChild(btn);
+      });
+
+      hint.textContent = editing
+        ? 'Tap a button to rename or delete it.'
+        : `${photos.length} of ${MAX_PHOTOS} photos`;
+    }
+
+    /* ---------- Viewer ---------- */
+
+    function openViewer(photo) {
+      currentUrl = URL.createObjectURL(photo.blob);
+      viewerImg.src = currentUrl;
+      viewerTitle.textContent = photo.name;
+      viewer.classList.add('open');
+    }
+
+    function closeViewer() {
+      viewer.classList.remove('open');
+      viewerImg.removeAttribute('src');
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+        currentUrl = null;
+      }
+    }
+
+    document.getElementById('closeViewer').onclick = closeViewer;
+
+    /* ---------- Edit mode ---------- */
+
+    editToggle.onclick = () => {
+      editing = !editing;
+      editToggle.textContent = editing ? 'Done' : 'Edit';
+      render();
+    };
+
+    function openSheet(photo) {
+      editingId = photo.id;
+      nameInput.value = photo.name;
+      sheetBackdrop.classList.add('open');
+    }
+
+    function closeSheet() {
+      sheetBackdrop.classList.remove('open');
+      editingId = null;
+    }
+
+    document.getElementById('cancelSheet').onclick = closeSheet;
+
+    sheetBackdrop.onclick = (e) => {
+      if (e.target === sheetBackdrop) closeSheet();
+    };
+
+    document.getElementById('saveName').onclick = async () => {
+      const name = nameInput.value.trim();
+      if (!name || editingId === null) return;
+      const record = await getOne(editingId);
+      record.name = name;
+      await put(record);
+      closeSheet();
+      render();
+    };
+
+    document.getElementById('deletePhoto').onclick = async () => {
+      if (editingId === null) return;
+      if (!confirm('Delete this photo from the page?')) return;
+      await remove(editingId);
+      closeSheet();
+      render();
+    };
+
+    /* ---------- Adding photos ---------- */
+
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      fileInput.value = '';
+      if (!files.length) return;
+
+      const existing = await getAll();
+      let room = MAX_PHOTOS - existing.length;
+
+      if (room <= 0) {
+        alert(`Limit of ${MAX_PHOTOS} photos reached. Delete one first.`);
+        return;
+      }
+
+      if (files.length > room) {
+        alert(`Only ${room} more photo(s) fit, so the first ${room} will be added.`);
+      }
+
+      for (const file of files.slice(0, room)) {
+        // Default name = file name without extension; you can rename in Edit mode
+        const defaultName = file.name.replace(/\.[^.]+$/, '') || 'Photo';
+        const name = (prompt('Name for this photo:', defaultName) || defaultName).trim();
+        await put({ name: name || defaultName, blob: file });
+      }
+
+      render();
+    });
+
+    /* ---------- Offline support ---------- */
+
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
