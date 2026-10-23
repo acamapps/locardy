@@ -325,7 +325,7 @@
   <label for="fileInput" class="add-label">Add new card(s)</label>
   <input type="file" id="fileInput" accept="image/*" multiple>
   <p class="hint" id="hint"></p>
-  <p class="hint" style="margin-top: 4px;">acamapps v1.2</p>
+  <p class="hint" style="margin-top: 4px;">acamapps v1.3</p>
 
   <!-- Viewer -->
   <div class="viewer" id="viewer">
@@ -381,149 +381,263 @@
     const swatchBox     = document.getElementById('swatches');
     const sortBtn       = document.getElementById('sortBtn');
 
-    let db;
+    let db = null;
+    let cards = [];            // names, colours and order, held in memory. The photos stay in the database until opened.
     let editing = false;
     let editingId = null;
     let selectedColour = DEFAULT_COLOUR;
     let currentUrl = null;
+    let statusError = '';
 
-    /* ---------- Database ---------- */
+    /* ---------- Database ----------
+       Two stores:
+         photos : one small record per card (name, colour, order)
+         blobs  : the photo files, keyed by the card's id
+       Keeping them apart means listing, sorting and reordering cards never has to read or
+       rewrite the (large) photos. */
 
-    const request = indexedDB.open('QuickPhotos', 1);
+    const DB_NAME = 'QuickPhotos';
+    const DB_VERSION = 2;
 
-    request.onupgradeneeded = (e) => {
-      e.target.result.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
-    };
-
-    request.onsuccess = (e) => {
-      db = e.target.result;
-      render();
-      // Ask the browser not to clear this data when storage is low
-      if (navigator.storage && navigator.storage.persist) {
-        navigator.storage.persist();
-      }
-    };
-
-    request.onerror = () => {
-      hint.textContent = 'Could not open local storage. Cards cannot be saved here.';
-    };
-
-    // Photos saved by earlier versions have no "order" or "colour"; fall back to id / grey.
-    const orderOf = (p) => (typeof p.order === 'number' ? p.order : p.id);
-
-    function getAll() {
+    function openDb() {
       return new Promise((resolve, reject) => {
-        const req = db.transaction('photos', 'readonly').objectStore('photos').getAll();
-        req.onsuccess = () => resolve(req.result.sort((a, b) => orderOf(a) - orderOf(b)));
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+
+        req.onupgradeneeded = (e) => {
+          const d = req.result;
+          const tx = req.transaction;
+
+          if (!d.objectStoreNames.contains('photos')) {
+            d.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+          }
+          if (!d.objectStoreNames.contains('blobs')) {
+            d.createObjectStore('blobs');
+          }
+
+          // Upgrade from version 1 (photo stored inside each card record): move each photo into
+          // the blobs store. This all happens in one transaction, so if anything fails the
+          // upgrade is cancelled and the old data is left exactly as it was.
+          if (e.oldVersion >= 1 && e.oldVersion < 2) {
+            const photos = tx.objectStore('photos');
+            const blobs = tx.objectStore('blobs');
+            photos.openCursor().onsuccess = (ev) => {
+              const cursor = ev.target.result;
+              if (!cursor) return;
+              const record = cursor.value;
+              if (record.blob) {
+                blobs.put(record.blob, record.id);
+                delete record.blob;
+                cursor.update(record);
+              }
+              cursor.continue();
+            };
+          }
+        };
+
+        req.onsuccess = () => {
+          req.result.onversionchange = () => req.result.close();
+          resolve(req.result);
+        };
         req.onerror = () => reject(req.error);
+        req.onblocked = () => {};
       });
     }
 
-    function getOne(id) {
+    const request = (req) => new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    const finished = (tx) => new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    });
+
+    // Card details only (never the photo files)
+    async function loadCards() {
+      const records = await request(db.transaction('photos', 'readonly').objectStore('photos').getAll());
+      return records.map((r) => {
+        const { blob, ...details } = r;
+        return details;
+      });
+    }
+
+    // Add a card and its photo in one transaction. Returns the new card's id.
+    async function addToDb(details, blob) {
+      const tx = db.transaction(['photos', 'blobs'], 'readwrite');
+      let newId;
+      const req = tx.objectStore('photos').add(details);
+      req.onsuccess = () => {
+        newId = req.result;
+        tx.objectStore('blobs').put(blob, newId);
+      };
+      await finished(tx);
+      return newId;
+    }
+
+    // Change some fields of a card (read, change, write back: nothing else about the record is lost)
+    async function updateDetails(id, fields) {
+      const tx = db.transaction('photos', 'readwrite');
+      const store = tx.objectStore('photos');
+      const req = store.get(id);
+      req.onsuccess = () => {
+        if (req.result) store.put(Object.assign(req.result, fields));
+      };
+      await finished(tx);
+    }
+
+    async function saveOrder(ids) {
+      const tx = db.transaction('photos', 'readwrite');
+      const store = tx.objectStore('photos');
+      ids.forEach((id, index) => {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          if (req.result) {
+            req.result.order = index;
+            store.put(req.result);
+          }
+        };
+      });
+      await finished(tx);
+    }
+
+    async function removeFromDb(id) {
+      const tx = db.transaction(['photos', 'blobs'], 'readwrite');
+      tx.objectStore('photos').delete(id);
+      tx.objectStore('blobs').delete(id);
+      await finished(tx);
+    }
+
+    function getBlob(id) {
       return new Promise((resolve, reject) => {
-        const req = db.transaction('photos', 'readonly').objectStore('photos').get(id);
-        req.onsuccess = () => resolve(req.result);
+        const tx = db.transaction(['blobs', 'photos'], 'readonly');
+        const req = tx.objectStore('blobs').get(id);
         req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          if (req.result) return resolve(req.result);
+          // Fallback for a card whose photo is still inside its record
+          const req2 = tx.objectStore('photos').get(id);
+          req2.onerror = () => reject(req2.error);
+          req2.onsuccess = () => resolve((req2.result && req2.result.blob) || null);
+        };
       });
     }
 
-    function put(record) {
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('photos', 'readwrite');
-        tx.objectStore('photos').put(record);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
+    // All database writes go through one queue, in order, in the background.
+    // The screen never waits for them: it updates straight away from memory.
+    let writeChain = Promise.resolve();
+
+    function enqueue(job) {
+      const result = writeChain.then(job);
+      writeChain = result.catch(() => {});
+      return result;
+    }
+
+    function saveInBackground(job) {
+      enqueue(job).then(() => {
+        if (statusError) { statusError = ''; render(); }
+      }).catch(() => {
+        statusError = 'The last change could not be saved. The phone’s storage may be full.';
+        render();
       });
     }
 
-    function remove(id) {
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('photos', 'readwrite');
-        tx.objectStore('photos').delete(id);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-    }
+    /* ---------- Cards ---------- */
 
-    // Save the display order: ids is the list of photo ids in the new order.
-    function saveOrder(ids) {
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('photos', 'readwrite');
-        const store = tx.objectStore('photos');
-        ids.forEach((id, index) => {
-          const req = store.get(id);
-          req.onsuccess = () => {
-            const record = req.result;
-            if (record) {
-              record.order = index;
-              store.put(record);
-            }
-          };
-        });
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-    }
+    const orderOf = (c) => (typeof c.order === 'number' ? c.order : c.id);
 
-    /* ---------- Grid ---------- */
-
-    async function render() {
-      const photos = await getAll();
+    function render() {
+      cards.sort((a, b) => orderOf(a) - orderOf(b));
       grid.innerHTML = '';
       grid.classList.toggle('editing', editing);
       sortBtn.hidden = !editing;
 
-      if (photos.length === 0) {
+      if (cards.length === 0) {
         const msg = document.createElement('div');
         msg.className = 'empty-msg';
-        msg.textContent = 'No cards yet. Tap "Add cards".';
+        msg.textContent = 'No cards yet. Tap "Add new card(s)".';
         grid.appendChild(msg);
       }
 
-      photos.forEach((photo) => {
+      cards.forEach((card) => {
         const btn = document.createElement('div');
         btn.className = 'photo-btn';
         btn.setAttribute('role', 'button');
-        btn.dataset.id = photo.id;
-        btn.style.setProperty('--c', photo.colour || DEFAULT_COLOUR);
+        btn.dataset.id = card.id;
+        btn.style.setProperty('--c', card.colour || DEFAULT_COLOUR);
 
         const handle = document.createElement('span');
         handle.className = 'handle';
-        handle.textContent = '☰';           // ☰ drag handle
+        handle.textContent = '☰';           // drag handle
         handle.setAttribute('aria-label', 'Drag to reorder');
 
         const label = document.createElement('span');
         label.className = 'label';
-        label.textContent = photo.name;
+        label.textContent = card.name;
 
         btn.append(handle, label);
-        btn.onclick = () => (editing ? openSheet(photo) : openViewer(photo));
+        btn.onclick = () => (editing ? openSheet(card) : openViewer(card));
         grid.appendChild(btn);
       });
 
-      hint.textContent = editing
+      hint.textContent = statusError || (editing
         ? 'Drag ☰ to reorder. Tap a button to rename, recolour or delete.'
-        : `${photos.length} of ${MAX_PHOTOS} cards`;
+        : `${cards.length} of ${MAX_PHOTOS} cards`);
     }
 
-    /* ---------- Drag to reorder (Edit mode) ---------- */
-    // While dragging, the button just follows the finger (no DOM changes, so iOS keeps the
-    // touch). The new order is applied and saved when the finger lifts.
+    /* ---------- Drag to reorder (Edit mode) ----------
+       While dragging, the button simply follows the finger. When the finger lifts (or the
+       phone interrupts the touch) the button is dropped in the slot it is over (or nearest to),
+       the order is applied on screen at once and saved in the background. */
 
     let drag = null;
-    let pendingSave = Promise.resolve();
-
-    function cardUnder(x, y, except) {
-      for (const c of grid.querySelectorAll('.photo-btn')) {
-        if (c === except) continue;
-        const r = c.getBoundingClientRect();
-        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return c;
-      }
-      return null;
-    }
+    let autoScrollTimer = null;
 
     function clearDropTargets() {
       grid.querySelectorAll('.drop-target').forEach((c) => c.classList.remove('drop-target'));
+    }
+
+    // Which slot is the finger over (or nearest to)? The dragged button counts as the slot it started in.
+    function slotAt(x, y, d) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const c of grid.querySelectorAll('.photo-btn')) {
+        let r;
+        if (c === d.card) {
+          const shift = window.scrollY - d.startScrollY;
+          r = { left: d.orig.left, right: d.orig.right, top: d.orig.top - shift, bottom: d.orig.bottom - shift };
+        } else {
+          r = c.getBoundingClientRect();
+        }
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return c;
+        const dist = ((r.left + r.right) / 2 - x) ** 2 + ((r.top + r.bottom) / 2 - y) ** 2;
+        if (dist < bestDist) { bestDist = dist; best = c; }
+      }
+      return best;
+    }
+
+    function refreshDrag() {
+      const d = drag;
+      const dx = d.lastX - d.startX;
+      const dy = d.lastY - d.startY + (window.scrollY - d.startScrollY);
+      d.card.style.transform = `translate(${dx}px, ${dy}px) scale(1.05)`;
+
+      clearDropTargets();
+      const target = slotAt(d.lastX, d.lastY, d);
+      if (target && target !== d.card) target.classList.add('drop-target');
+    }
+
+    // Keeps scrolling while the finger is held near the top or bottom edge
+    function autoScrollTick() {
+      if (!drag) return;
+      let step = 0;
+      if (drag.lastY < 90) step = -10;
+      else if (drag.lastY > window.innerHeight - 90) step = 10;
+      if (step) {
+        window.scrollBy(0, step);
+        refreshDrag();
+      }
     }
 
     grid.addEventListener('pointerdown', (e) => {
@@ -534,59 +648,72 @@
       e.preventDefault();
       const card = handle.closest('.photo-btn');
       try { handle.setPointerCapture(e.pointerId); } catch (err) {}
-      drag = { card, handle, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, target: null, scrolled: 0 };
+
+      const r = card.getBoundingClientRect();
+      drag = {
+        card, handle,
+        pointerId: e.pointerId,
+        startX: e.clientX, startY: e.clientY,
+        lastX: e.clientX, lastY: e.clientY,
+        startScrollY: window.scrollY,
+        orig: { left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+      };
       card.classList.add('dragging');
+      autoScrollTimer = setInterval(autoScrollTick, 16);
     });
 
     grid.addEventListener('pointermove', (e) => {
       if (!drag || e.pointerId !== drag.pointerId) return;
       e.preventDefault();
-
-      // Scroll the page if the finger is near the top or bottom edge
-      let step = 0;
-      if (e.clientY < 90) step = -12;
-      else if (e.clientY > window.innerHeight - 90) step = 12;
-      if (step) {
-        const before = window.scrollY;
-        window.scrollBy(0, step);
-        drag.scrolled += window.scrollY - before;
-      }
-
-      // Button follows the finger (adjusted for any scrolling since the drag began)
-      const dx = e.clientX - drag.startX;
-      const dy = e.clientY - drag.startY + drag.scrolled;
-      drag.card.style.transform = `translate(${dx}px, ${dy}px) scale(1.05)`;
-
-      // Highlight the button the finger is over
-      clearDropTargets();
-      drag.target = cardUnder(e.clientX, e.clientY, drag.card);
-      if (drag.target) drag.target.classList.add('drop-target');
+      drag.lastX = e.clientX;
+      drag.lastY = e.clientY;
+      refreshDrag();
     });
 
-    function finishDrag(e, commit) {
+    function endDrag(e) {
       if (!drag || e.pointerId !== drag.pointerId) return;
-      const { card, handle, target } = drag;
+      const d = drag;
       drag = null;
+      clearInterval(autoScrollTimer);
 
-      try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
-      card.classList.remove('dragging');
-      card.style.transform = '';
+      try { d.handle.releasePointerCapture(e.pointerId); } catch (err) {}
+
+      // Decide where it was dropped (using the last position we saw)
+      const moved = Math.hypot(d.lastX - d.startX, d.lastY - d.startY) > 12;
+      const target = moved ? slotAt(d.lastX, d.lastY, d) : null;
+
+      // Put the button back without any sliding animation
+      d.card.style.transition = 'none';
+      d.card.classList.remove('dragging');
+      d.card.style.transform = '';
       clearDropTargets();
 
-      if (!commit || !target) return;
+      if (target && target !== d.card) {
+        const all = Array.from(grid.querySelectorAll('.photo-btn'));
+        if (all.indexOf(target) > all.indexOf(d.card)) target.after(d.card);
+        else target.before(d.card);
 
-      // Move the dragged button to the target's position
-      const cards = Array.from(grid.querySelectorAll('.photo-btn'));
-      if (cards.indexOf(target) > cards.indexOf(card)) target.after(card);
-      else target.before(card);
+        // Apply the new order in memory, then save it in the background
+        const ids = Array.from(grid.querySelectorAll('.photo-btn')).map((c) => Number(c.dataset.id));
+        ids.forEach((id, index) => {
+          const card = cards.find((c) => c.id === id);
+          if (card) card.order = index;
+        });
+        saveInBackground(() => saveOrder(ids));
+      }
 
-      const ids = Array.from(grid.querySelectorAll('.photo-btn')).map((c) => Number(c.dataset.id));
-      pendingSave = saveOrder(ids).catch(() => {});
+      void d.card.offsetWidth;          // apply the change before animations come back
+      d.card.style.transition = '';
     }
 
-    grid.addEventListener('pointerup', (e) => finishDrag(e, true));
-    grid.addEventListener('pointercancel', (e) => finishDrag(e, false));
-    grid.addEventListener('lostpointercapture', (e) => finishDrag(e, false));
+    grid.addEventListener('pointerup', endDrag);
+    grid.addEventListener('pointercancel', endDrag);
+    grid.addEventListener('lostpointercapture', endDrag);
+
+    // Stops iOS from scrolling the page or cancelling the touch while a button is being dragged
+    document.addEventListener('touchmove', (e) => {
+      if (drag) e.preventDefault();
+    }, { passive: false });
 
     // A drag that ends on the handle should not also count as a tap on the button
     grid.addEventListener('click', (e) => {
@@ -595,14 +722,28 @@
 
     /* ---------- Viewer ---------- */
 
-    function openViewer(photo) {
-      currentUrl = URL.createObjectURL(photo.blob);
-      viewerImg.src = currentUrl;
-      viewerTitle.textContent = photo.name;
+    let viewToken = 0;
+
+    async function openViewer(card) {
+      const token = ++viewToken;
+      viewerTitle.textContent = card.name;
       viewer.classList.add('open');
+
+      let blob = null;
+      try { blob = await getBlob(card.id); } catch (err) {}
+      if (token !== viewToken) return;          // closed before it finished loading
+
+      if (!blob) {
+        closeViewer();
+        alert('This card’s photo could not be found.');
+        return;
+      }
+      currentUrl = URL.createObjectURL(blob);
+      viewerImg.src = currentUrl;
     }
 
     function closeViewer() {
+      viewToken++;
       viewer.classList.remove('open');
       viewerImg.removeAttribute('src');
       if (currentUrl) {
@@ -615,8 +756,7 @@
 
     /* ---------- Edit mode ---------- */
 
-    editToggle.onclick = async () => {
-      await pendingSave;               // make sure a just-finished drag has been saved
+    editToggle.onclick = () => {
       editing = !editing;
       editToggle.textContent = editing ? 'Done' : 'Edit';
       render();
@@ -624,13 +764,12 @@
 
     // Sort A-Z: one tap puts every card in alphabetical order and saves it.
     // You can still drag cards afterwards to fine-tune the order.
-    sortBtn.onclick = async () => {
-      await pendingSave;
-      const photos = await getAll();
-      photos.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-      pendingSave = saveOrder(photos.map((p) => p.id)).catch(() => {});
-      await pendingSave;
+    sortBtn.onclick = () => {
+      cards.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+      cards.forEach((c, i) => { c.order = i; });
+      const ids = cards.map((c) => c.id);
       render();
+      saveInBackground(() => saveOrder(ids));
     };
 
     const isPalette = (v) => COLOURS.some((c) => c.value.toLowerCase() === String(v).toLowerCase());
@@ -672,10 +811,10 @@
       updateSelection();
     }
 
-    function openSheet(photo) {
-      editingId = photo.id;
-      nameInput.value = photo.name;
-      selectedColour = photo.colour || DEFAULT_COLOUR;
+    function openSheet(card) {
+      editingId = card.id;
+      nameInput.value = card.name;
+      selectedColour = card.colour || DEFAULT_COLOUR;
       buildSwatches();
       sheetBackdrop.classList.add('open');
     }
@@ -691,23 +830,29 @@
       if (e.target === sheetBackdrop) closeSheet();
     };
 
-    document.getElementById('saveBtn').onclick = async () => {
+    document.getElementById('saveBtn').onclick = () => {
       const name = nameInput.value.trim();
       if (!name || editingId === null) return;
-      const record = await getOne(editingId);
-      record.name = name;
-      record.colour = selectedColour;
-      await put(record);
+      const id = editingId;
+      const colour = selectedColour;
+      const card = cards.find((c) => c.id === id);
+      if (card) {
+        card.name = name;
+        card.colour = colour;
+      }
       closeSheet();
       render();
+      saveInBackground(() => updateDetails(id, { name, colour }));
     };
 
-    document.getElementById('deletePhoto').onclick = async () => {
+    document.getElementById('deletePhoto').onclick = () => {
       if (editingId === null) return;
       if (!confirm('Delete this card from the page?')) return;
-      await remove(editingId);
+      const id = editingId;
+      cards = cards.filter((c) => c.id !== id);
       closeSheet();
       render();
+      saveInBackground(() => removeFromDb(id));
     };
 
     /* ---------- Adding photos ---------- */
@@ -717,8 +862,7 @@
       fileInput.value = '';
       if (!files.length) return;
 
-      const existing = await getAll();
-      const room = MAX_PHOTOS - existing.length;
+      const room = MAX_PHOTOS - cards.length;
 
       if (room <= 0) {
         alert(`Limit of ${MAX_PHOTOS} cards reached. Delete one first.`);
@@ -729,21 +873,48 @@
         alert(`Only ${room} more card(s) fit, so the first ${room} will be added.`);
       }
 
-      // New photos go at the end of the current order
-      let nextOrder = existing.length ? Math.max(...existing.map(orderOf)) + 1 : 0;
+      // New cards go at the end of the current order
+      let nextOrder = cards.length ? Math.max(...cards.map(orderOf)) + 1 : 0;
 
       try {
         for (const file of files.slice(0, room)) {
           // Default name = file name without extension; rename / recolour in Edit mode
           const defaultName = file.name.replace(/\.[^.]+$/, '') || 'Photo';
-          const name = (prompt('Name for this card:', defaultName) || defaultName).trim();
-          await put({ name: name || defaultName, blob: file, colour: DEFAULT_COLOUR, order: nextOrder++ });
+          const name = (prompt('Name for this card:', defaultName) || defaultName).trim() || defaultName;
+          const details = { name, colour: DEFAULT_COLOUR, order: nextOrder++ };
+          const id = await enqueue(() => addToDb(details, file));
+          cards.push({ ...details, id });
+          render();
         }
       } catch (err) {
-        alert('A card could not be saved. The phone\'s storage may be full.');
+        alert('A card could not be saved. The phone’s storage may be full.');
+      }
+    });
+
+    /* ---------- Start up ---------- */
+
+    hint.textContent = 'Loading…';
+
+    openDb().then(async (opened) => {
+      db = opened;
+      cards = await loadCards();
+
+      // Cards saved by older versions may have no order yet: number them now
+      cards.sort((a, b) => orderOf(a) - orderOf(b));
+      if (cards.some((c) => typeof c.order !== 'number')) {
+        cards.forEach((c, i) => { c.order = i; });
+        const ids = cards.map((c) => c.id);
+        saveInBackground(() => saveOrder(ids));
       }
 
       render();
+
+      // Ask the browser not to clear this data when storage is low
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist();
+      }
+    }).catch(() => {
+      hint.textContent = 'Could not open local storage. Cards cannot be saved here.';
     });
 
     /* ---------- Offline support ---------- */
