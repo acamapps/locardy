@@ -1,7 +1,7 @@
 // Service worker: lets the page open offline.
 // Only the page itself (and its icon) is cached. Photos live in IndexedDB, not here.
 // If you change index.html, bump the version number below so phones pick up the new page.
-const CACHE = 'quick-photos-v9';
+const CACHE = 'quick-photos-v10';
 const PAGE = './index.html';
 
 self.addEventListener('install', (event) => {
