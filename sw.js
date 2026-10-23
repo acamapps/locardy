@@ -1,12 +1,12 @@
 // Service worker: lets the page open offline.
 // Only the page itself (and its icon) is cached. Photos live in IndexedDB, not here.
 // If you change index.html, bump the version number below so phones pick up the new page.
-const CACHE = 'quick-photos-v8';
+const CACHE = 'quick-photos-v9';
 const PAGE = './index.html';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(['./', PAGE, './apple-touch-icon.png', './manifest.json']))
+    caches.open(CACHE).then((cache) => cache.addAll(['./', PAGE, './apple-touch-icon.png', './icon-192.png', './icon-512.png', './manifest.json']))
   );
   self.skipWaiting();
 });
@@ -14,7 +14,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('quick-photos-') && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
