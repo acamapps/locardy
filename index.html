@@ -291,10 +291,10 @@
 
   <div class="grid" id="grid"></div>
 
-  <label for="fileInput" class="add-label">Add Photos</label>
+  <label for="fileInput" class="add-label">Add new card(s)</label>
   <input type="file" id="fileInput" accept="image/*" multiple>
   <p class="hint" id="hint"></p>
-  <p class="hint" style="margin-top: 4px;">acamapps v1.0</p>
+  <p class="hint" style="margin-top: 4px;">acamapps v1.1</p>
 
   <!-- Viewer -->
   <div class="viewer" id="viewer">
@@ -306,18 +306,18 @@
   <!-- Edit sheet -->
   <div class="sheet-backdrop" id="sheetBackdrop">
     <div class="sheet" id="sheet">
-      <h3 id="sheetTitle">Edit photo</h3>
+      <h3 id="sheetTitle">Edit card</h3>
       <input type="text" id="nameInput" maxlength="40" autocomplete="off">
       <span class="field-label">Colour</span>
       <div class="swatches" id="swatches"></div>
       <button class="action primary" id="saveBtn">Save</button>
-      <button class="action danger" id="deletePhoto">Delete photo</button>
+      <button class="action danger" id="deletePhoto">Delete card</button>
       <button class="action" id="cancelSheet">Cancel</button>
     </div>
   </div>
 
   <script>
-    const MAX_PHOTOS = 16;
+    const MAX_PHOTOS = 20;
 
     // Colour palette. The first entry (grey) is the default / "no colour".
     const COLOURS = [
@@ -368,7 +368,7 @@
     };
 
     request.onerror = () => {
-      hint.textContent = 'Could not open local storage. Photos cannot be saved here.';
+      hint.textContent = 'Could not open local storage. Cards cannot be saved here.';
     };
 
     // Photos saved by earlier versions have no "order" or "colour"; fall back to id / grey.
@@ -438,7 +438,7 @@
       if (photos.length === 0) {
         const msg = document.createElement('div');
         msg.className = 'empty-msg';
-        msg.textContent = 'No photos yet. Tap "Add Photos".';
+        msg.textContent = 'No cards yet. Tap "Add cards".';
         grid.appendChild(msg);
       }
 
@@ -465,7 +465,7 @@
 
       hint.textContent = editing
         ? 'Drag ☰ to reorder. Tap a button to rename, recolour or delete.'
-        : `${photos.length} of ${MAX_PHOTOS} photos`;
+        : `${photos.length} of ${MAX_PHOTOS} cards`;
     }
 
     /* ---------- Drag to reorder (Edit mode) ---------- */
@@ -602,7 +602,7 @@
 
     document.getElementById('deletePhoto').onclick = async () => {
       if (editingId === null) return;
-      if (!confirm('Delete this photo from the page?')) return;
+      if (!confirm('Delete this card from the page?')) return;
       await remove(editingId);
       closeSheet();
       render();
@@ -619,12 +619,12 @@
       const room = MAX_PHOTOS - existing.length;
 
       if (room <= 0) {
-        alert(`Limit of ${MAX_PHOTOS} photos reached. Delete one first.`);
+        alert(`Limit of ${MAX_PHOTOS} cards reached. Delete one first.`);
         return;
       }
 
       if (files.length > room) {
-        alert(`Only ${room} more photo(s) fit, so the first ${room} will be added.`);
+        alert(`Only ${room} more card(s) fit, so the first ${room} will be added.`);
       }
 
       // New photos go at the end of the current order
@@ -633,7 +633,7 @@
       for (const file of files.slice(0, room)) {
         // Default name = file name without extension; rename / recolour in Edit mode
         const defaultName = file.name.replace(/\.[^.]+$/, '') || 'Photo';
-        const name = (prompt('Name for this photo:', defaultName) || defaultName).trim();
+        const name = (prompt('Name for this card:', defaultName) || defaultName).trim();
         await put({ name: name || defaultName, blob: file, colour: DEFAULT_COLOUR, order: nextOrder++ });
       }
 
