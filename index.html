@@ -8,8 +8,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Locardy">
   <meta name="theme-color" content="#0b0b0c">
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
   <title>Locardy</title>
 
   <style>
@@ -44,6 +46,9 @@
       align-items: center;
       margin-bottom: 16px;
     }
+
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+    [hidden] { display: none !important; }
 
     h1 { font-size: 1.4rem; font-weight: 600; margin: 0; letter-spacing: -0.5px; }
 
@@ -127,10 +132,15 @@
     .editing .photo-btn { border-style: dashed; padding-left: 40px; }
 
     .photo-btn.dragging {
-      transform: scale(1.05);
       z-index: 5;
+      transition: none;
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
       opacity: 0.92;
+    }
+
+    .photo-btn.drop-target {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
 
     .empty-msg {
@@ -265,6 +275,24 @@
 
     .sheet .swatch.selected { border-color: #fff; }
 
+    /* Custom colour: rainbow swatch that opens the phone's colour picker */
+    .sheet .swatch.custom {
+      position: relative;
+      overflow: hidden;
+      background: conic-gradient(#ff453a, #ffd60a, #30d158, #0a84ff, #bf5af2, #ff453a);
+    }
+
+    .sheet .swatch.custom input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+    }
+
     .sheet .action {
       width: 100%;
       border: none;
@@ -286,7 +314,10 @@
 <body>
   <header>
     <h1>Locardy</h1>
-    <button class="link-btn" id="editToggle">Edit</button>
+    <div class="header-actions">
+      <button class="link-btn" id="sortBtn" hidden>Sort A&ndash;Z</button>
+      <button class="link-btn" id="editToggle">Edit</button>
+    </div>
   </header>
 
   <div class="grid" id="grid"></div>
@@ -294,7 +325,7 @@
   <label for="fileInput" class="add-label">Add new card(s)</label>
   <input type="file" id="fileInput" accept="image/*" multiple>
   <p class="hint" id="hint"></p>
-  <p class="hint" style="margin-top: 4px;">acamapps v1.1</p>
+  <p class="hint" style="margin-top: 4px;">acamapps v1.2</p>
 
   <!-- Viewer -->
   <div class="viewer" id="viewer">
@@ -322,13 +353,18 @@
     // Colour palette. The first entry (grey) is the default / "no colour".
     const COLOURS = [
       { name: 'Grey',   value: '#8e8e93' },
-      { name: 'Blue',   value: '#0a84ff' },
-      { name: 'Teal',   value: '#30b0c7' },
-      { name: 'Green',  value: '#30d158' },
-      { name: 'Yellow', value: '#ffd60a' },
-      { name: 'Orange', value: '#ff9f0a' },
+      { name: 'Brown',  value: '#a2845e' },
       { name: 'Red',    value: '#ff453a' },
       { name: 'Pink',   value: '#ff375f' },
+      { name: 'Orange', value: '#ff9f0a' },
+      { name: 'Yellow', value: '#ffd60a' },
+      { name: 'Lime',   value: '#a6d608' },
+      { name: 'Green',  value: '#30d158' },
+      { name: 'Mint',   value: '#3cd3a8' },
+      { name: 'Teal',   value: '#30b0c7' },
+      { name: 'Cyan',   value: '#64d2ff' },
+      { name: 'Blue',   value: '#0a84ff' },
+      { name: 'Indigo', value: '#5e5ce6' },
       { name: 'Purple', value: '#bf5af2' }
     ];
     const DEFAULT_COLOUR = COLOURS[0].value;
@@ -343,6 +379,7 @@
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const nameInput     = document.getElementById('nameInput');
     const swatchBox     = document.getElementById('swatches');
+    const sortBtn       = document.getElementById('sortBtn');
 
     let db;
     let editing = false;
@@ -434,6 +471,7 @@
       const photos = await getAll();
       grid.innerHTML = '';
       grid.classList.toggle('editing', editing);
+      sortBtn.hidden = !editing;
 
       if (photos.length === 0) {
         const msg = document.createElement('div');
@@ -469,18 +507,34 @@
     }
 
     /* ---------- Drag to reorder (Edit mode) ---------- */
+    // While dragging, the button just follows the finger (no DOM changes, so iOS keeps the
+    // touch). The new order is applied and saved when the finger lifts.
 
     let drag = null;
+    let pendingSave = Promise.resolve();
+
+    function cardUnder(x, y, except) {
+      for (const c of grid.querySelectorAll('.photo-btn')) {
+        if (c === except) continue;
+        const r = c.getBoundingClientRect();
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return c;
+      }
+      return null;
+    }
+
+    function clearDropTargets() {
+      grid.querySelectorAll('.drop-target').forEach((c) => c.classList.remove('drop-target'));
+    }
 
     grid.addEventListener('pointerdown', (e) => {
-      if (!editing) return;
+      if (!editing || drag) return;
       const handle = e.target.closest('.handle');
       if (!handle) return;
 
       e.preventDefault();
       const card = handle.closest('.photo-btn');
-      handle.setPointerCapture(e.pointerId);
-      drag = { card, pointerId: e.pointerId, handle };
+      try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+      drag = { card, handle, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, target: null, scrolled: 0 };
       card.classList.add('dragging');
     });
 
@@ -488,38 +542,51 @@
       if (!drag || e.pointerId !== drag.pointerId) return;
       e.preventDefault();
 
-      // Nudge the page if the finger is near the top or bottom edge
-      if (e.clientY < 90) window.scrollBy(0, -14);
-      else if (e.clientY > window.innerHeight - 90) window.scrollBy(0, 14);
-
-      // If the finger is over another button, swap places with it
-      const cards = Array.from(grid.querySelectorAll('.photo-btn'));
-      for (const other of cards) {
-        if (other === drag.card) continue;
-        const r = other.getBoundingClientRect();
-        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-          const dragIndex = cards.indexOf(drag.card);
-          const otherIndex = cards.indexOf(other);
-          if (otherIndex > dragIndex) other.after(drag.card);
-          else other.before(drag.card);
-          break;
-        }
+      // Scroll the page if the finger is near the top or bottom edge
+      let step = 0;
+      if (e.clientY < 90) step = -12;
+      else if (e.clientY > window.innerHeight - 90) step = 12;
+      if (step) {
+        const before = window.scrollY;
+        window.scrollBy(0, step);
+        drag.scrolled += window.scrollY - before;
       }
+
+      // Button follows the finger (adjusted for any scrolling since the drag began)
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY + drag.scrolled;
+      drag.card.style.transform = `translate(${dx}px, ${dy}px) scale(1.05)`;
+
+      // Highlight the button the finger is over
+      clearDropTargets();
+      drag.target = cardUnder(e.clientX, e.clientY, drag.card);
+      if (drag.target) drag.target.classList.add('drop-target');
     });
 
-    async function endDrag(e) {
+    function finishDrag(e, commit) {
       if (!drag || e.pointerId !== drag.pointerId) return;
-      const finished = drag;
+      const { card, handle, target } = drag;
       drag = null;
-      finished.card.classList.remove('dragging');
-      try { finished.handle.releasePointerCapture(e.pointerId); } catch (err) {}
+
+      try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
+      card.classList.remove('dragging');
+      card.style.transform = '';
+      clearDropTargets();
+
+      if (!commit || !target) return;
+
+      // Move the dragged button to the target's position
+      const cards = Array.from(grid.querySelectorAll('.photo-btn'));
+      if (cards.indexOf(target) > cards.indexOf(card)) target.after(card);
+      else target.before(card);
 
       const ids = Array.from(grid.querySelectorAll('.photo-btn')).map((c) => Number(c.dataset.id));
-      await saveOrder(ids);
+      pendingSave = saveOrder(ids).catch(() => {});
     }
 
-    grid.addEventListener('pointerup', endDrag);
-    grid.addEventListener('pointercancel', endDrag);
+    grid.addEventListener('pointerup', (e) => finishDrag(e, true));
+    grid.addEventListener('pointercancel', (e) => finishDrag(e, false));
+    grid.addEventListener('lostpointercapture', (e) => finishDrag(e, false));
 
     // A drag that ends on the handle should not also count as a tap on the button
     grid.addEventListener('click', (e) => {
@@ -548,26 +615,61 @@
 
     /* ---------- Edit mode ---------- */
 
-    editToggle.onclick = () => {
+    editToggle.onclick = async () => {
+      await pendingSave;               // make sure a just-finished drag has been saved
       editing = !editing;
       editToggle.textContent = editing ? 'Done' : 'Edit';
       render();
     };
 
+    // Sort A-Z: one tap puts every card in alphabetical order and saves it.
+    // You can still drag cards afterwards to fine-tune the order.
+    sortBtn.onclick = async () => {
+      await pendingSave;
+      const photos = await getAll();
+      photos.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+      pendingSave = saveOrder(photos.map((p) => p.id)).catch(() => {});
+      await pendingSave;
+      render();
+    };
+
+    const isPalette = (v) => COLOURS.some((c) => c.value.toLowerCase() === String(v).toLowerCase());
+
+    function updateSelection() {
+      swatchBox.querySelectorAll('.swatch').forEach((el) => {
+        const on = el.classList.contains('custom')
+          ? !isPalette(selectedColour)
+          : el.dataset.colour.toLowerCase() === String(selectedColour).toLowerCase();
+        el.classList.toggle('selected', on);
+      });
+    }
+
     function buildSwatches() {
       swatchBox.innerHTML = '';
+
       COLOURS.forEach((c) => {
         const s = document.createElement('button');
         s.type = 'button';
-        s.className = 'swatch' + (c.value === selectedColour ? ' selected' : '');
+        s.className = 'swatch';
+        s.dataset.colour = c.value;
         s.style.setProperty('--sw', c.value);
         s.setAttribute('aria-label', c.name);
-        s.onclick = () => {
-          selectedColour = c.value;
-          buildSwatches();
-        };
+        s.onclick = () => { selectedColour = c.value; updateSelection(); };
         swatchBox.appendChild(s);
       });
+
+      // Custom colour: opens the phone's own colour picker
+      const custom = document.createElement('label');
+      custom.className = 'swatch custom';
+      custom.setAttribute('aria-label', 'Custom colour');
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = isPalette(selectedColour) ? '#ff6b6b' : selectedColour;
+      input.oninput = () => { selectedColour = input.value; updateSelection(); };
+      custom.appendChild(input);
+      swatchBox.appendChild(custom);
+
+      updateSelection();
     }
 
     function openSheet(photo) {
@@ -630,11 +732,15 @@
       // New photos go at the end of the current order
       let nextOrder = existing.length ? Math.max(...existing.map(orderOf)) + 1 : 0;
 
-      for (const file of files.slice(0, room)) {
-        // Default name = file name without extension; rename / recolour in Edit mode
-        const defaultName = file.name.replace(/\.[^.]+$/, '') || 'Photo';
-        const name = (prompt('Name for this card:', defaultName) || defaultName).trim();
-        await put({ name: name || defaultName, blob: file, colour: DEFAULT_COLOUR, order: nextOrder++ });
+      try {
+        for (const file of files.slice(0, room)) {
+          // Default name = file name without extension; rename / recolour in Edit mode
+          const defaultName = file.name.replace(/\.[^.]+$/, '') || 'Photo';
+          const name = (prompt('Name for this card:', defaultName) || defaultName).trim();
+          await put({ name: name || defaultName, blob: file, colour: DEFAULT_COLOUR, order: nextOrder++ });
+        }
+      } catch (err) {
+        alert('A card could not be saved. The phone\'s storage may be full.');
       }
 
       render();
